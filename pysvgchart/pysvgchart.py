@@ -1,22 +1,55 @@
 import collections.abc
+import datetime
 import math
 import datetime as dt
 
 
 def default_format(value):
+    """
+    format a number
+    """
     return '{0:,}'.format(value)
 
 
-def collapse_element_list(built_ins):
-    return [e for built_in in built_ins for e in built_in.get_element_list()]
+def collapse_element_list(*args):
+    """
+    flatten any number of lists of lists of elements to a list of elements
+    """
+    return [e for built_ins in args for built_in in built_ins for e in built_in.get_element_list()]
 
 
 def safe_get_element_list(built_in):
+    """
+    always return a list
+    """
     return built_in.get_element_list() if built_in is not None else []
 
 
-def get_numeric_limits(values, max_ticks):
+def get_numeric_limits(
+        values,
+        max_ticks,
+        min_value=None,
+        max_value=None,
+        include_zero=False,
+):
+    """
+    compute numeric limits for a series of numbers
+    :param values: actual values
+    :param max_ticks: maximum number of ticks
+    :param min_value: optional minimum value to include in limits
+    :param max_value: optional maximum value to include in limits
+    :param include_zero: whether to include zero in limits
+    """
     value_min, value_max = min(values), max(values)
+    if min_value:
+        value_min = min(value_min, min_value)
+    if max_value:
+        value_max = max(value_max, max_value)
+    if include_zero:
+        if value_min > 0:
+            value_min = 0
+        if value_max < 0:
+            value_max = 0
     raw_pad = (1.2 * value_max - 0.95 * value_min) / max_ticks
     remainder = math.log10(abs(raw_pad)) - int(math.log10(abs(raw_pad)))
     leader = 2 if remainder < 0.301 else (5 if remainder < 0.698 else 10)
@@ -26,10 +59,12 @@ def get_numeric_limits(values, max_ticks):
     return [y * pad for y in range(start, end + 1)]
 
 
-import datetime as dt
-
-
 def get_big_date_limits(dates, max_ticks=10):
+    """
+    compute date limits for a series of dates/datetimes
+    :param dates: actual dates/datetimes
+    :param max_ticks: maximum number of ticks
+    """
     date_min, date_max = min(dates), max(dates)
     if date_min >= date_max:
         raise ValueError("Dates must have a positive range.")
@@ -58,9 +93,8 @@ def get_big_date_limits(dates, max_ticks=10):
         else:
             interval_months = 12
 
-        start = dt.datetime(date_min.year, date_min.month, 1)
-        end = dt.datetime(date_max.year, date_max.month, 1) + dt.timedelta(days=31)
-        end = dt.datetime(end.year, end.month, 1)
+        start = date_min.replace(day=1)
+        end = (date_max.replace(day=1) + dt.timedelta(days=32)).replace(day=1)  # first day of next month
 
         ticks = []
         current_tick = start
@@ -69,7 +103,7 @@ def get_big_date_limits(dates, max_ticks=10):
             month = current_tick.month + interval_months
             year = current_tick.year + (month - 1) // 12
             month = (month - 1) % 12 + 1
-            current_tick = dt.datetime(year, month, 1)
+            current_tick = current_tick.replace(year=year, month=month)
 
         return ticks
 
@@ -81,19 +115,40 @@ def get_big_date_limits(dates, max_ticks=10):
             break
         current_tick += interval
 
-    print(ticks[-1])
     return ticks
 
 
-def get_limits(values, max_ticks):
-    if values is None or not isinstance(values, collections.abc.Iterable) or len(set(values)) <= 1:
-        raise ValueError("Values must be a non-empty iterable with at least two unique elements.")
-    if all(isinstance(v, dt.datetime) or isinstance(v, dt.date) for v in values):
+def get_limits(
+        values,
+        max_ticks,
+        min_value=None,
+        max_value=None,
+        include_zero=False,
+        min_unique_values=2,
+    ):
+    """
+    compute numeric limits for a series of numbers
+    :param values: actual values
+    :param max_ticks: maximum number of ticks
+    :param min_value: optional minimum value to include in limits
+    :param max_value: optional maximum value to include in limits
+    :param include_zero: whether to include zero in limits
+    :param min_unique_values: minimum number of unique values required
+    """
+    if values is None or not isinstance(values, collections.abc.Iterable) or len(set(values)) < min_unique_values:
+        raise ValueError("Values must be a non-empty iterable with at least %d unique elements.", min_unique_values)
+    if all(isinstance(v, (dt.datetime, dt.date)) for v in values):
         return get_big_date_limits(values, max_ticks)
-    elif all(isinstance(v, int) or isinstance(v, float) for v in values):
-        return get_numeric_limits(values, max_ticks)
+    elif all(isinstance(v, (int, float)) for v in values):
+        return get_numeric_limits(
+            values,
+            max_ticks,
+            min_value=min_value,
+            max_value=max_value,
+            include_zero=include_zero,
+        )
     else:
-        raise ValueError("Invalid numeric data")
+        raise TypeError("Invalid data types in values")
 
 
 class Point:
@@ -118,6 +173,7 @@ class Shape:
 
 
 class Line(Shape):
+
     line_template = '<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" {styles}/>'
 
     def __init__(self, x_position, y_position, width, height, styles=None):
@@ -134,6 +190,7 @@ class Line(Shape):
 
 
 class Circle(Shape):
+
     circle_template = '<circle cx="{x}" cy="{y}" r="{r}" {styles}/>'
 
     def __init__(self, x_position, y_position, radius, styles=None):
@@ -146,6 +203,7 @@ class Circle(Shape):
 
 
 class Text(Shape):
+
     text_template = '<text x="{x}" y="{y}" {styles}>{content}</text>'
 
     def __init__(self, x_position, y_position, content, styles=None):
@@ -158,13 +216,37 @@ class Text(Shape):
 
 
 class Axis(Shape):
+    """
+    axis of a graph
+    """
     default_axis_styles = {'stroke': '#2e2e2c'}
 
-    def __init__(self, x_position, y_position, data_points, axis_length, label_format, max_ticks=10, axis_styles=None, tick_length=5):
+    def __init__(
+            self,
+            x_position,
+            y_position,
+            data_points,
+            axis_length,
+            label_format,
+            max_ticks=10,
+            axis_styles=None,
+            tick_length=5,
+            min_value=None,
+            max_value=None,
+            include_zero=False,
+            min_unique_values=2,
+    ):
         super().__init__(x_position, y_position)
         self.data_points = data_points
         self.length = axis_length
-        self.limits = get_limits(data_points, max_ticks)
+        self.limits = get_limits(
+            data_points,
+            max_ticks,
+            min_value=min_value,
+            max_value=max_value,
+            include_zero=include_zero,
+            min_unique_values=min_unique_values,
+        )
         self.label_format = label_format
         self.axis_line = None
         self.tick_lines, self.tick_text, self.grid_lines = [], [], []
@@ -177,10 +259,39 @@ class Axis(Shape):
 
 
 class XAxis(Axis):
+    """
+    x-axis of a graph
+    """
     default_tick_text_styles = {'text-anchor': 'middle', 'dominant-baseline': 'hanging'}
 
-    def __init__(self, x_position, y_position, data_points, axis_length, label_format, max_ticks=10, axis_styles=None, tick_length=5):
-        super().__init__(x_position, y_position, data_points, axis_length, label_format, max_ticks, axis_styles, tick_length)
+    def __init__(
+            self,
+            x_position,
+            y_position,
+            data_points,
+            axis_length,
+            label_format,
+            max_ticks=10,
+            axis_styles=None,
+            tick_length=5,
+            min_value=None,
+            max_value=None,
+            include_zero=False,
+    ):
+        super().__init__(
+            x_position=x_position,
+            y_position=y_position,
+            data_points=data_points,
+            axis_length=axis_length,
+            label_format=label_format,
+            max_ticks=max_ticks,
+            axis_styles=axis_styles,
+            tick_length=tick_length,
+            min_value=min_value,
+            max_value=max_value,
+            include_zero=include_zero,
+            min_unique_values=2,  # at least two unique values needed on the x-axis to create a meaningful graph
+        )
         styles = axis_styles or self.default_axis_styles.copy()
         self.axis_line = Line(x_position=self.position.x, y_position=self.position.y, width=axis_length, height=0, styles=styles)
         for i, m in enumerate(self.limits):
@@ -193,11 +304,41 @@ class XAxis(Axis):
 
 
 class YAxis(Axis):
+    """
+    x-axis of a graph
+    """
     default_tick_text_styles = {'text-anchor': 'end', 'dominant-baseline': 'middle'}
     default_sec_tick_text_styles = {'text-anchor': 'start', 'dominant-baseline': 'middle'}
 
-    def __init__(self, x_position, y_position, data_points, axis_length, label_format, max_ticks=10, axis_styles=None, tick_length=5, secondary=False):
-        super().__init__(x_position, y_position, data_points, axis_length, label_format, max_ticks, axis_styles, tick_length)
+    def __init__(
+            self,
+            x_position,
+            y_position,
+            data_points,
+            axis_length,
+            label_format,
+            max_ticks=10,
+            axis_styles=None,
+            tick_length=5,
+            min_value=None,
+            max_value=None,
+            include_zero=False,
+            secondary=False,
+    ):
+        super().__init__(
+            x_position=x_position,
+            y_position=y_position,
+            data_points=data_points,
+            axis_length=axis_length,
+            label_format=label_format,
+            max_ticks=max_ticks,
+            axis_styles=axis_styles,
+            tick_length=tick_length,
+            min_value=min_value,
+            max_value=max_value,
+            include_zero=include_zero,
+            min_unique_values=1,  # one unique value is sufficient for the y-axis
+        )
         styles = axis_styles or self.default_axis_styles.copy()
         self.axis_line = Line(x_position=self.position.x, y_position=self.position.y, width=0, height=axis_length, styles=styles)
         for i, m in enumerate(self.limits):
@@ -214,12 +355,17 @@ class YAxis(Axis):
 
 
 class SimpleXAxis(XAxis):
-
+    """
+    x-axis of a graph with evenly spaced x values
+    """
     def get_positions(self, x_values):
         return [self.position.x + x * self.length / (len(x_values) - 1) for x in range(len(x_values))]
 
 
 class SimpleLineSeries(Shape):
+    """
+    line series given as a number of (x, y)-points
+    """
     path_default_styles = {'stroke-width': '2'}
     path_begin_template = '<path d="{path}" fill="none" {styles}/>'
 
@@ -240,7 +386,15 @@ class SimpleLineSeries(Shape):
 class LineLegend(Shape):
     default_line_legend_text_styles = {'alignment-baseline': 'middle'}
 
-    def __init__(self, x_position, y_position, series, element_x, element_y, line_length, line_text_gap):
+    def __init__(self,
+            x_position,
+            y_position,
+            series,
+            element_x,
+            element_y,
+            line_length,
+            line_text_gap,
+    ):
         super().__init__(x_position, y_position)
         self.series = series
         self.lines, self.texts = [], []
@@ -252,11 +406,13 @@ class LineLegend(Shape):
             y_pos += element_y
 
     def get_element_list(self):
-        return collapse_element_list(self.lines) + collapse_element_list(self.texts)
+        return collapse_element_list(self.lines, self.texts)
 
 
 class Chart:
-    # height="{height}" width="{width}"
+    """
+    chart canvas
+    """
     svg_begin_template = '<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">'
     default_major_grid_styles = {'stroke': '#2e2e2c'}
     default_minor_grid_styles = {'stroke': '#2e2e2c', 'stroke-width': "0.4"}
@@ -343,20 +499,132 @@ class Chart:
 
 
 class SimpleLineChart(Chart):
+    """
+    a chart with one or more lines
+    - all lines share the same x values
+    - y values differ per line
+    """
     __line_colour_defaults__ = ['green', 'red', 'blue', 'orange', 'yellow', 'black']
 
-    def __init__(self, x_values, y_values, sec_y_values=None, y_names=None, sec_y_names=None, x_max_ticks=12, y_max_ticks=12, x_margin=100, y_margin=100, height=600, width=800, x_labels=default_format, y_labels=default_format, sec_y_labels=default_format):
+    def __init__(
+            self,
+            # chart data
+            x_values,
+            y_values,
+            sec_y_values=None,
+            y_names=None,
+            sec_y_names=None,
+            # x-axis
+            x_min=None,
+            x_max=None,
+            x_zero=False,
+            x_max_ticks=12,
+            x_label_format=default_format,
+            # primary y-axis
+            y_min=None,
+            y_max=None,
+            y_zero=False,
+            y_max_ticks=12,
+            y_label_format=default_format,
+            # secondary y-axis
+            sec_y_min=None,
+            sec_y_max=None,
+            sec_y_zero=False,
+            sec_y_max_ticks=12,
+            sec_y_label_format=default_format,
+            # canvas
+            x_margin=100,
+            y_margin=100,
+            height=600,
+            width=800,
+    ):
+        """
+        create a simple line chart
+        :param x_values: the list of x values shared by all lines
+        :param y_values: a list line values for the primary y-axis, each a list itself
+        :param sec_y_values:  a list line values for the secondary y-axis, each a list itself
+        :param y_names: optional list of names of the lines of the primary y-axis
+        :param sec_y_names: optional list of names of the lines of the secondary y-axis
+        :param x_min: optional minimum x value
+        :param x_max: optional maximum x value
+        :param x_zero: optionally force 0 to be included on the x-axis
+        :param x_max_ticks: optional maximum number of ticks on the x-axis
+        :param x_label_format: optional format of labels on the x-axis
+        :param y_min: optional minimum value on the primary y-axis
+        :param y_max: optional maximum value on the primary y-axis
+        :param y_zero: optionally force 0 to be included on the primary y-axis
+        :param y_max_ticks: optional maximum number of ticks on the primary y-axis
+        :param y_label_format: optional format of labels on the primary y-axis
+        :param sec_y_min: optional minimum value on the secondary y-axis
+        :param sec_y_max: optional maximum value on the secondary y-axis
+        :param sec_y_zero: optionally force 0 to be included on the secondary y-axis
+        :param sec_y_max_ticks: optional maximum number of ticks on the secondary y-axis
+        :param sec_y_label_format: optional format of labels on the secondary y-axis
+        :param x_margin: optional margin for the x-axis
+        :param y_margin: optional margin for the y-axis
+        :param height: optional height of the graph
+        :param width: optional width of the graph
+        """
         super().__init__(height, width)
         series_names = y_names if y_names is not None else ['Series {0}'.format(k) for k in range(len(y_values))]
         all_y_values = [v for series in y_values for v in series]
-        self.y_axis = YAxis(x_position=x_margin, y_position=y_margin, data_points=all_y_values, axis_length=height - 2 * y_margin, label_format=y_labels, max_ticks=y_max_ticks)
-        self.x_axis = SimpleXAxis(x_position=x_margin, y_position=height - y_margin, data_points=x_values, axis_length=width - 2 * x_margin, label_format=x_labels, max_ticks=x_max_ticks)
-        self.series = {name: SimpleLineSeries([Point(x, y) for x, y in zip(self.x_axis.get_positions(x_values), self.y_axis.get_positions(y_value))]) for name, y_value in zip(series_names, y_values)}
+        self.y_axis = YAxis(
+            x_position=x_margin,
+            y_position=y_margin,
+            data_points=all_y_values,
+            axis_length=height - 2 * y_margin,
+            label_format=y_label_format,
+            max_ticks=y_max_ticks,
+            min_value=y_min,
+            max_value=y_max,
+            include_zero=y_zero,
+        )
+        self.x_axis = SimpleXAxis(
+            x_position=x_margin,
+            y_position=height - y_margin,
+            data_points=x_values,
+            axis_length=width - 2 * x_margin,
+            label_format=x_label_format,
+            max_ticks=x_max_ticks,
+            min_value=x_min,
+            max_value=x_max,
+            include_zero=x_zero,
+        )
+        self.series = {
+            name: SimpleLineSeries(
+                [
+                    Point(x, y)
+                    for x, y in zip(self.x_axis.get_positions(x_values), self.y_axis.get_positions(y_value))
+                ],
+            )
+            for name, y_value in zip(series_names, y_values)
+        }
         if sec_y_values is not None:
             sec_all_y_values = [v for series in sec_y_values for v in series]
             sec_series_names = sec_y_names if sec_y_names is not None else ['Secondary series {0}'.format(k) for k in range(len(sec_y_values))]
-            self.sec_y_axis = YAxis(x_position=width - x_margin, y_position=y_margin, data_points=sec_all_y_values, axis_length=height - 2 * y_margin, label_format=sec_y_labels, max_ticks=y_max_ticks, secondary=True)
-            self.series.update({name: SimpleLineSeries([Point(x, y) for x, y in zip(self.x_axis.get_positions(x_values), self.sec_y_axis.get_positions(y_value))]) for name, y_value in zip(sec_series_names, sec_y_values)})
+            self.sec_y_axis = YAxis(
+                x_position=width - x_margin,
+                y_position=y_margin,
+                data_points=sec_all_y_values,
+                axis_length=height - 2 * y_margin,
+                label_format=sec_y_label_format,
+                max_ticks=sec_y_max_ticks,
+                min_value=sec_y_min,
+                max_value=sec_y_max,
+                include_zero=sec_y_zero,
+                secondary=True,
+            )
+            self.series.update(
+                {
+                    name: SimpleLineSeries(
+                        [
+                            Point(x, y)
+                            for x, y in zip(self.x_axis.get_positions(x_values), self.sec_y_axis.get_positions(y_value))
+                        ]
+                    )
+                    for name, y_value in zip(sec_series_names, sec_y_values)
+                }
+            )
         else:
             self.sec_y_axis = None
         for index, series in enumerate(self.series):
